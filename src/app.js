@@ -1,10 +1,11 @@
-import express, { urlencoded } from "express";
+import express from "express";
 import cors from "cors";
 import cookieParser from "cookie-parser";
 
+const app = express();
 
 app.use(cors({
-    origin: process.env.CORS_ORIGIN,
+    origin: process.env.CORS_ORIGIN || "http://localhost:3000",
     credentials: true
 }));
 
@@ -14,4 +15,10 @@ app.use(express.static("public"));
 app.use(cookieParser());
 
 
-const app = express();
+// import routers 
+
+import userRoutes from "./routes/user.routes.js";
+
+app.use("/api/v1/users", userRoutes)
+
+export default app;
