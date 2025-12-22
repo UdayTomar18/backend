@@ -6,10 +6,10 @@ import { ApiResponse } from '../utils/ApiResponse.js';
 
 const registerUser = asyncHandler(async (req, res) => {
 
-  const { name, email, password, username } = req.body;
+  const { fullName, email, password, username } = req.body;
 
   // validation
-  if ([name, email, username, password].some(field => field?.trim() === "")) {
+  if ([fullName, email, username, password].some(field => field?.trim() === "")) {
     throw new ApiErrors(400, "All fields are required");
   }
 
@@ -42,7 +42,7 @@ const coverImageLocalPath = req.files?.coverImage?.[0]?.path;
 
   // create user
   const user = await User.create({
-    name,
+    fullName,
     email,
     password,
     username: username.toLowerCase(),
