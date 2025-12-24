@@ -3,9 +3,43 @@ import { ApiErrors } from '../utils/ApiErrors.js';
 import { User } from '../models/user.model.js';
 import { uploadOnCloudinary } from '../utils/cloudinary.js';
 import { ApiResponse } from '../utils/ApiResponse.js';
+import dotenv from 'dotenv';
+import jwt from 'jsonwebtoken';
+
+dotenv.config({
+    path: "./.env"
+});
+
+
+
+
+const generateAccessTokenAndRefreshToken = async (userId) => {
+  try {
+    const user = await User.findById(userId);
+    if (!user) {
+      throw new ApiErrors(404, "User not found while generating tokens");
+    }
+
+    const accessToken = user.generateAccessToken();
+    const refreshToken = user.generateRefreshToken();
+
+    user.refreshToken = refreshToken;
+    await user.save({ validateBeforeSave: false });
+
+    return { accessToken, refreshToken };
+
+  } catch (error) {
+
+    console.error("TOKEN ERROR:", error);
+
+    throw new ApiErrors(
+      500,
+      error.message || "Something went wrong while generating tokens"
+    );
+  }
+};
 
 const registerUser = asyncHandler(async (req, res) => {
-
   const { fullName, email, password, username } = req.body;
 
   // validation
@@ -23,8 +57,7 @@ const registerUser = asyncHandler(async (req, res) => {
   }
 
   const avatarLocalPath = req.files?.avatar?.[0]?.path;
-const coverImageLocalPath = req.files?.coverImage?.[0]?.path;
-
+  const coverImageLocalPath = req.files?.coverImage?.[0]?.path;
 
   if (!avatarLocalPath) {
     throw new ApiErrors(400, "Avatar is required");
@@ -55,12 +88,150 @@ const coverImageLocalPath = req.files?.coverImage?.[0]?.path;
   );
 
   if (!createdUser) {
-    throw new ApiErrors(500, "Something went wrong while registering the user");
+    throw new ApiErrors(
+      500,
+      "Something went wrong while registering the user"
+    );
   }
 
   return res.status(201).json(
-    new ApiResponse(201, createdUser, "User registered successfully")
+    new ApiResponse(
+      201,
+      createdUser,
+      "User registered successfully"
+    )
   );
 });
 
-export { registerUser };
+const logInUser = asyncHandler(async (req, res) => {
+  const { email, username, password } = req.body;
+
+  // validation
+  if (!email && !username) {
+    throw new ApiErrors(
+      400,
+      "username or email are required"
+    );
+  }
+
+  const user = await User.findOne({
+    $or: [
+      { email },
+      { username: username?.toLowerCase() }
+    ]
+  });
+
+  if (!user) {
+    throw new ApiErrors(404, "User not found");
+  }
+
+  const isPasswordValid = await user.isPasswordCorrect(password);
+  if (!isPasswordValid) {
+    throw new ApiErrors(401, "Password is incorrect");
+  }
+
+  const { accessToken, refreshToken } =
+    await generateAccessTokenAndRefreshToken(user._id);
+
+  const logedInUser = await User.findById(user._id)
+    .select('-password -refreshToken');
+
+  const options = {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === 'production',
+    sameSite: 'Lax'
+  };
+
+  return res
+    .status(200)
+    .cookie("refreshToken", refreshToken, options)
+    .cookie("accessToken", accessToken, options)
+    .json(
+      new ApiResponse(
+        200,
+        {
+          user: logedInUser,
+          accessToken,
+          refreshToken
+        },
+        "User logged in successfully"
+      )
+    );
+});
+
+const logoutUser = asyncHandler(async (req, res) => {
+  await User.findByIdAndUpdate(
+    req.user._id,
+    {
+      $set: { refreshToken: undefined }
+    },
+    { new: true }
+  );
+
+  const options = {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === 'production',
+    sameSite: 'Lax'
+  };
+
+  return res
+    .status(200)
+    .clearCookie("refreshToken", options)
+    .clearCookie("accessToken", options)
+    .json(
+      new ApiResponse(
+        200,
+        {},
+        "User logged out successfully"
+      )
+    );
+});
+
+const refreshAccessToken  = asyncHandler(async (req,res)=>{
+  const incomingRefreshToken = req.cookies.refreshToken || req.body.refreshToken;
+  if(!incomingRefreshToken){
+    throw new ApiErrors(401,"unauthorized request ")
+  }
+
+ try {
+  const decodedToken=jwt.verify(incomingRefreshToken,process.env.REFRESH_TOKEN_SECRET);
+   const user=await User.findById(decodedToken?._id);
+   if(!user || user.refreshToken !== incomingRefreshToken){
+ 
+     throw new ApiErrors(401,"invalid refresh token")
+   }
+ 
+   const {accessToken,newRefreshToken}=await generateAccessTokenAndRefreshToken(user._id);
+ 
+   const options={
+     httpOnly:true,
+     secure: process.env.NODE_ENV === 'production',
+     sameSite: 'Lax'
+   };
+ 
+   return res
+     .status(200)
+     .cookie("refreshToken", newRefreshToken, options)
+     .cookie("accessToken", accessToken, options)
+     .json(
+       new ApiResponse(
+         200,
+         {
+           accessToken,
+           refreshToken:newRefreshToken
+         },
+         "Access token refreshed successfully"
+       )
+     );
+ } catch (error) {
+  throw new ApiErrors(401,error.message || "invalid or expired refresh token")
+  
+ }
+});
+
+export {
+  registerUser,
+  logInUser,
+  logoutUser,
+  refreshAccessToken
+};
